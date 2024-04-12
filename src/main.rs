@@ -1,38 +1,79 @@
-// Uncomment this block to pass the first stage
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-fn main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
+use mio::net::{TcpListener, TcpStream};
+use mio::{Events, Interest, Poll, Token};
+use std::collections::HashMap;
+use std::io::{ErrorKind, Read, Write};
 
-    // Uncomment this block to pass the first stage
+const SERVER: Token = Token(0);
 
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+fn handle_client(connection: &mut TcpStream) -> std::io::Result<bool> {
+    let mut buffer = [0; 1024];
+    match connection.read(&mut buffer) {
+        Ok(0) => {
+            // Connection closed by client
+            eprintln!("Connection closed");
+            Ok(true)
+        }
+        Ok(_n) => {
+            // Echo data back to the client.
+            connection.write_all("+PONG\r\n".as_bytes())?;
+            // connection.write_all(&buffer[..n])?;
+            Ok(false)
+        }
+        Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+            // Socket is not ready, try again later.
+            eprintln!("Socket is not ready, try again later.: {}", e);
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream_buf) => {
-                println!("accepted new connection");
-                handle_client(stream_buf);
-            }
-            Err(e) => {
-                println!("error: {}", e);
-            }
+            Ok(false)
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            Err(e)
         }
     }
 }
 
-fn handle_client(mut stream: TcpStream) {
-    let mut buf = [0; 512];
+fn main() -> std::io::Result<()> {
+    // Create a poll instance
+    let mut poll = Poll::new()?;
+    let mut events = Events::with_capacity(128);
+
+    // Set up the TCP listener
+    let addr = "0.0.0.0:6379".parse().unwrap();
+    let mut listener = TcpListener::bind(addr).unwrap();
+    poll.registry()
+        .register(&mut listener, SERVER, Interest::READABLE)?;
+
+    // Create a map to store the connected clients
+    let mut clients = HashMap::new();
+
+    // Start the event loop
     loop {
-        let bytes_read = stream.read(&mut buf).expect("Failed to read from client");
+        poll.poll(&mut events, None)?;
 
-        if bytes_read == 0 {
-            return;
+        for event in &events {
+            match event.token() {
+                SERVER => {
+                    let (mut stream, address) = listener.accept()?;
+                    eprintln!("Accepted connection from: {}", address);
+
+                    let token = Token(clients.len() + 1);
+                    poll.registry()
+                        .register(&mut stream, token, Interest::READABLE)?;
+                    clients.insert(token, stream);
+                }
+                token => {
+                    let done = if let Some(stream) = clients.get_mut(&token) {
+                        handle_client(stream)
+                    } else {
+                        // Connection was closed
+                        Ok(true)
+                    };
+
+                    if done? {
+                        clients.remove(&token);
+                    }
+                }
+            }
         }
-
-        stream
-            .write_all("+PONG\r\n".as_bytes())
-            .expect("Failed to write to client");
     }
 }
