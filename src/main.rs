@@ -1,13 +1,9 @@
 mod resp;
 
 use anyhow::{Ok, Result};
-use bytes::{BufMut, BytesMut};
-// use parser::{RedisError, RedisParser, RedisValue};
-use std::collections::HashMap;
 
 use resp::RedisValue;
-use std::str;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+
 use tokio::net::{TcpListener, TcpStream};
 
 #[derive(Debug)]
@@ -23,11 +19,10 @@ async fn main() -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {
-            handle_connection(stream).await;
+            let _ = handle_connection(stream).await;
         });
     }
 }
-
 
 // *2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n
 async fn handle_connection(stream: TcpStream) -> Result<()> {
@@ -39,22 +34,10 @@ async fn handle_connection(stream: TcpStream) -> Result<()> {
 
         let response = if let Some(v) = value {
             match to_command(extract_command(v)?) {
-                anyhow::Result::Ok(RedisCommand::Echo(args)) => args,
-                anyhow::Result::Ok(RedisCommand::Ping) => {
-                    RedisValue::SimpleString("PONG".to_owned())
-                }
+                Result::Ok(RedisCommand::Echo(args)) => args,
+                Result::Ok(RedisCommand::Ping) => RedisValue::SimpleString("PONG".to_owned()),
                 _c => panic!("Cannot handle command."),
-                // Err(anyhow::anyhow!(
-                //     "Could not parse RedisCommand, error: {:?}",
-                //     c
-                // )),
             }
-            // let (command, args) = to_command(extract_command(v)?);
-            // match command.to_lowercase().as_str() {
-            //     "ping" => RedisValue::SimpleString("PONG".to_string()),
-            //     "echo" => args.first().unwrap().clone(),
-            //     c => panic!("Cannot handle command {}", c),
-            // }
         } else {
             break Ok(());
         };
@@ -89,4 +72,3 @@ fn unpack_bulk_str(value: RedisValue) -> Result<String> {
         _ => Err(anyhow::anyhow!("Expected command to be a bulk string")),
     }
 }
-

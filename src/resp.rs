@@ -110,5 +110,4 @@ fn read_until_crlf(buffer: &[u8]) -> Option<(&[u8], usize)> {
 }
 fn parse_int(buffer: &[u8]) -> Result<i64> {
     Ok(std::str::from_utf8(buffer)?.parse::<i64>()?)
-    // Ok(String::from_utf8(buffer.to_vec())?.parse::<i64>()?)
 }
