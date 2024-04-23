@@ -1,8 +1,23 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+mod resp;
+
+use anyhow::{Ok, Result};
+use bytes::{BufMut, BytesMut};
+// use parser::{RedisError, RedisParser, RedisValue};
+use std::collections::HashMap;
+
+use resp::RedisValue;
+use std::str;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
+#[derive(Debug)]
+enum RedisCommand {
+    Echo(RedisValue),
+    Ping,
+}
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let listener = TcpListener::bind("0.0.0.0:6379").await?;
 
     loop {
@@ -13,23 +28,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn handle_connection(mut stream: TcpStream) {
-    let mut buffer = [0; 1024];
+
+// *2\r\n$4\r\nECHO\r\n$3\r\nhey\r\n
+async fn handle_connection(stream: TcpStream) -> Result<()> {
+    let mut handler = resp::RespHandler::new(stream);
 
     loop {
-        let _n = match stream.read(&mut buffer).await {
-            Ok(n) if n == 0 => return,
-            Ok(n) => n,
-            Err(e) => {
-                eprintln!("failed to read from socket; err = {:?}", e);
-                return;
-            }
-        };
+        let value = handler.read_value().await?;
+        eprintln!("Got value {:?}", value);
 
-        // connection.write_all("+PONG\r\n".as_bytes())?;
-        if let Err(e) = stream.write_all("+PONG\r\n".as_bytes()).await {
-            eprintln!("failed to write to socket; err = {:?}", e);
-            return;
-        }
+        let response = if let Some(v) = value {
+            match to_command(extract_command(v)?) {
+                anyhow::Result::Ok(RedisCommand::Echo(args)) => args,
+                anyhow::Result::Ok(RedisCommand::Ping) => {
+                    RedisValue::SimpleString("PONG".to_owned())
+                }
+                _c => panic!("Cannot handle command."),
+                // Err(anyhow::anyhow!(
+                //     "Could not parse RedisCommand, error: {:?}",
+                //     c
+                // )),
+            }
+            // let (command, args) = to_command(extract_command(v)?);
+            // match command.to_lowercase().as_str() {
+            //     "ping" => RedisValue::SimpleString("PONG".to_string()),
+            //     "echo" => args.first().unwrap().clone(),
+            //     c => panic!("Cannot handle command {}", c),
+            // }
+        } else {
+            break Ok(());
+        };
+        eprintln!("Sending value {:?}", response);
+        handler.write_value(response).await.unwrap();
     }
 }
+
+fn extract_command(value: RedisValue) -> Result<(String, Vec<RedisValue>)> {
+    match value {
+        RedisValue::Array(a) => Ok((
+            unpack_bulk_str(a.first().unwrap().clone())?,
+            a.into_iter().skip(1).collect(),
+        )),
+        _ => Err(anyhow::anyhow!("Unexpected command format")),
+    }
+}
+
+fn to_command((command, args): (String, Vec<RedisValue>)) -> Result<RedisCommand> {
+    match command.to_lowercase().as_str() {
+        "echo" => Ok(RedisCommand::Echo(args.first().unwrap().clone())),
+        // RedisValue::SimpleString("PONG".to_string()),
+        "ping" => Ok(RedisCommand::Ping),
+        // args.first().unwrap().clone(),
+        c => Err(anyhow::anyhow!("Cannot parse the command given: {:?}", c)), // panic!("Cannot handle command {}", c),
+    }
+}
+
+fn unpack_bulk_str(value: RedisValue) -> Result<String> {
+    match value {
+        RedisValue::BulkString(s) => Ok(s),
+        _ => Err(anyhow::anyhow!("Expected command to be a bulk string")),
+    }
+}
+
