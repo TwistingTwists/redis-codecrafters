@@ -5,7 +5,7 @@ use tokio::{
     net::TcpStream,
 };
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Hash, Eq, Clone)]
 pub enum RedisValue {
     SimpleString(String),
     // Error(String),
@@ -108,6 +108,7 @@ fn read_until_crlf(buffer: &[u8]) -> Option<(&[u8], usize)> {
     }
     return None;
 }
+
 fn parse_int(buffer: &[u8]) -> Result<i64> {
     Ok(std::str::from_utf8(buffer)?.parse::<i64>()?)
 }
