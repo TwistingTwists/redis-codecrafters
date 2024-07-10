@@ -22,7 +22,12 @@ impl RedisValue {
     pub fn serialize(self) -> String {
         match self {
             RedisValue::SimpleString(s) => format!("+{}\r\n", s),
-            RedisValue::BulkString(s) => format!("${}\r\n{}\r\n", s.chars().count(), s),
+
+            RedisValue::BulkString(s) => match s.as_str() {
+                // this is null bulk string
+                "-1" => format!("$-1\r\n"),
+                val => format!("${}\r\n{}\r\n", s.chars().count(), val),
+            },
             _ => panic!("Unsupported value for serialize"),
         }
     }
@@ -120,7 +125,7 @@ pub fn parse_integer(buffer: &[u8]) -> Result<(RedisValue, usize)> {
     return Err(anyhow::anyhow!("Invalid integer {:?}", buffer));
 }
 
-pub  fn parse_int_with_sign(line: &[u8]) -> Result<i64> {
+pub fn parse_int_with_sign(line: &[u8]) -> Result<i64> {
     if line.is_empty() {
         return Err(anyhow::anyhow!("Empty integer value"));
     }
