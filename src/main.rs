@@ -60,13 +60,8 @@ async fn handle_connection(stream: TcpStream) -> Result<()> {
                     }
                 }
                 Result::Ok(RedisCommand::SetTimeout(key, value, timeout)) => {
-                    if let Some(value) =
-                        handle_command(RedisCommand::SetTimeout(key, value, timeout))
-                    {
-                        value
-                    } else {
-                        RedisValue::SimpleString("-1".to_owned())
-                    }
+                    let _ = handle_command(RedisCommand::SetTimeout(key, value, timeout));
+                    RedisValue::SimpleString("OK".to_owned())
                 }
 
                 _c => panic!("Cannot handle command."),
@@ -115,7 +110,7 @@ fn handle_command(command: RedisCommand) -> Option<RedisValue> {
                             Some(RedisValue::SimpleString("-1".to_owned())) // Return -1 if elapsed time is more than timeout
                         } else {
                             Some(value.clone()) // Return the original value if within timeout
-                        }   
+                        }
                     }
                     _ => panic!("This timeout key should not be in global hashmap."),
                 }
