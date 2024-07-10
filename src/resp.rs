@@ -9,7 +9,7 @@ use tokio::{
 pub enum RedisValue {
     SimpleString(String),
     // Error(String),
-    // Integer(i64),
+    Integer(i64),
     BulkString(String),
     Array(Vec<RedisValue>),
 }
@@ -50,7 +50,9 @@ impl RespHandler {
 }
 
 fn parse_message(buffer: BytesMut) -> Result<(RedisValue, usize)> {
+    // eprintln!("buffer: {:?}", buffer);
     match buffer[0] as char {
+        // ':' => parse_integer(&buffer),
         '+' => parse_simple_string(buffer),
         '*' => parse_array(buffer),
         '$' => parse_bulk_string(buffer),
@@ -107,6 +109,33 @@ fn read_until_crlf(buffer: &[u8]) -> Option<(&[u8], usize)> {
         }
     }
     return None;
+}
+
+pub fn parse_integer(buffer: &[u8]) -> Result<(RedisValue, usize)> {
+    if let Some((line, len)) = read_until_crlf(&buffer[1..]) {
+        if let Ok(int_val) = parse_int_with_sign(line) {
+            return Ok((RedisValue::Integer(int_val), len + 1));
+        }
+    }
+    return Err(anyhow::anyhow!("Invalid integer {:?}", buffer));
+}
+
+pub  fn parse_int_with_sign(line: &[u8]) -> Result<i64> {
+    if line.is_empty() {
+        return Err(anyhow::anyhow!("Empty integer value"));
+    }
+
+    let (sign, start_index) = match line[0] {
+        b'+' => (1, 1),
+        b'-' => (-1, 1),
+        _ => (1, 0),
+    };
+
+    let unsigned_val = std::str::from_utf8(&line[start_index..])?
+        .parse::<u64>()
+        .map_err(|e| anyhow::anyhow!("Invalid integer: {}", e))?;
+
+    Ok(sign * (unsigned_val as i64))
 }
 
 fn parse_int(buffer: &[u8]) -> Result<i64> {

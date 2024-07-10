@@ -1,8 +1,9 @@
 mod resp;
 
-use anyhow::{Ok, Result};
+use anyhow::{Error, Ok, Result};
 
-use resp::RedisValue;
+use resp::{parse_int_with_sign, RedisValue};
+use std::time::SystemTime;
 
 use tokio::net::{TcpListener, TcpStream};
 
@@ -11,6 +12,7 @@ enum RedisCommand {
     Echo(RedisValue),
     Ping,
     Set(RedisValue, RedisValue),
+    SetTimeout(RedisValue, RedisValue, RedisValue),
     Get(RedisValue),
 }
 
@@ -18,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 lazy_static::lazy_static! {
-    static ref GLOBAL_HASHMAP: Mutex<HashMap<RedisValue, RedisValue>> = Mutex::new(HashMap::new());
+    static ref GLOBAL_HASHMAP: Mutex<HashMap<RedisValue, (RedisValue, Option<(RedisValue, SystemTime)>)>> = Mutex::new(HashMap::new());
 }
 
 #[tokio::main]
@@ -57,6 +59,16 @@ async fn handle_connection(stream: TcpStream) -> Result<()> {
                         RedisValue::SimpleString("-1".to_owned())
                     }
                 }
+                Result::Ok(RedisCommand::SetTimeout(key, value, timeout)) => {
+                    if let Some(value) =
+                        handle_command(RedisCommand::SetTimeout(key, value, timeout))
+                    {
+                        value
+                    } else {
+                        RedisValue::SimpleString("-1".to_owned())
+                    }
+                }
+
                 _c => panic!("Cannot handle command."),
             }
         } else {
@@ -71,16 +83,42 @@ fn handle_command(command: RedisCommand) -> Option<RedisValue> {
     match command {
         RedisCommand::Set(key, value) => {
             let mut hashmap = GLOBAL_HASHMAP.lock().unwrap();
-            hashmap.insert(key.clone(), value.clone());
+            hashmap.insert(key.clone(), (value.clone(), None));
             eprintln!("\n\nhandle_command  {:?} -> {:?}\n", key, value);
+            eprintln!("\n\nhashmap  {:?}\n", hashmap);
+            None
+        }
+        RedisCommand::SetTimeout(key, value, timeout) => {
+            let mut hashmap = GLOBAL_HASHMAP.lock().unwrap();
+
+            hashmap.insert(
+                key.clone(),
+                (value.clone(), Some((timeout.clone(), SystemTime::now()))),
+            );
+            eprintln!("\n\nhandle_command SetTimeout  {:?} -> {:?}\n", key, value);
             eprintln!("\n\nhashmap  {:?}\n", hashmap);
             None
         }
         RedisCommand::Get(key) => {
             let hashmap = GLOBAL_HASHMAP.lock().unwrap();
-            if let Some(value) = hashmap.get(&key) {
-                eprintln!("\n\nGot value for key {:?} -> {:?}\n", key, value);
-                Some(value.clone())
+            if let Some(value_with_timeout) = hashmap.get(&key) {
+                match value_with_timeout {
+                    (value, None) => {
+                        eprintln!("\n\nGot value for key {:?} -> {:?}\n", key, value);
+
+                        Some(value.clone())
+                    }
+                    (value, Some((RedisValue::Integer(timeout), inserted_at))) => {
+                        let elapsed = inserted_at.elapsed().expect("no time elapsed?").as_millis();
+                        eprintln!("\nelapsed: {}", elapsed);
+                        if elapsed > *timeout as u128 {
+                            Some(RedisValue::SimpleString("-1".to_owned())) // Return -1 if elapsed time is more than timeout
+                        } else {
+                            Some(value.clone()) // Return the original value if within timeout
+                        }   
+                    }
+                    _ => panic!("This timeout key should not be in global hashmap."),
+                }
             } else {
                 eprintln!("\n\nNo value found for key {:?}\n", key);
                 None
@@ -107,9 +145,39 @@ fn to_command((command, args): (String, Vec<RedisValue>)) -> Result<RedisCommand
             if args.len() < 2 {
                 return Err(anyhow::anyhow!("Set command requires a key and a value"));
             }
-            let key = args.get(0).unwrap().clone();
-            let value = args.get(1).unwrap().clone();
-            Ok(RedisCommand::Set(key, value))
+
+            if args.len() == 4 {
+                let key = args.get(0).unwrap().clone();
+                let value = args.get(1).unwrap().clone();
+                if let RedisValue::BulkString(px_command) = args.get(2).unwrap().clone() {
+                    let timeout = match px_command.to_lowercase().as_str() {
+                        "px" => {
+                            if let RedisValue::BulkString(num_as_str) = args.get(3).unwrap().clone()
+                            {
+                                dbg!(&num_as_str);
+                                RedisValue::Integer(
+                                    parse_int_with_sign(num_as_str.as_bytes()).unwrap(),
+                                )
+                            } else {
+                                RedisValue::Integer(1000)
+                            }
+                        }
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "cannot parse anything other than px command in set"
+                            ))
+                        }
+                    };
+
+                    Ok(RedisCommand::SetTimeout(key, value, timeout))
+                } else {
+                    panic!("px command expected but not found");
+                }
+            } else {
+                let key = args.get(0).unwrap().clone();
+                let value = args.get(1).unwrap().clone();
+                Ok(RedisCommand::Set(key, value))
+            }
         }
         "get" => {
             if args.len() < 1 {
