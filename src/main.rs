@@ -107,7 +107,7 @@ fn handle_command(command: RedisCommand) -> Option<RedisValue> {
                         let elapsed = inserted_at.elapsed().expect("no time elapsed?").as_millis();
                         eprintln!("\nelapsed: {}", elapsed);
                         if elapsed > *timeout as u128 {
-                            Some(RedisValue::SimpleString("-1".to_owned())) // Return -1 if elapsed time is more than timeout
+                            Some(RedisValue::BulkString("-1".to_owned())) // Return -1 if elapsed time is more than timeout
                         } else {
                             Some(value.clone()) // Return the original value if within timeout
                         }
