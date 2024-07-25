@@ -4,7 +4,6 @@ use anyhow::{Error, Ok, Result};
 
 use resp::{parse_int_with_sign, RedisValue};
 use std::time::SystemTime;
-
 use tokio::net::{TcpListener, TcpStream};
 
 #[derive(Debug)]
@@ -23,9 +22,24 @@ lazy_static::lazy_static! {
     static ref GLOBAL_HASHMAP: Mutex<HashMap<RedisValue, (RedisValue, Option<(RedisValue, SystemTime)>)>> = Mutex::new(HashMap::new());
 }
 
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// The port number to use
+    #[arg(short, long, default_value_t = 6379)]
+    port: u16,
+}
+
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let listener = TcpListener::bind("0.0.0.0:6379").await?;
+    
+    let args = Args::parse();
+    
+    dbg!(args.port);
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
 
     loop {
         let (stream, _) = listener.accept().await?;

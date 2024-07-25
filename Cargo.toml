@@ -25,4 +25,4 @@ lazy_static = "1.4.0"
 # mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
 thiserror = "1.0.32"                                # error handling
 tokio = { version = "1.37.0", features = ["full"] } # async networking
-
+clap = { version = "4.0", features = ["derive"] }
