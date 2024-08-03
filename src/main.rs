@@ -6,13 +6,14 @@ use resp::{parse_int_with_sign, RedisValue};
 use std::time::SystemTime;
 use tokio::net::{TcpListener, TcpStream};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum RedisCommand {
     Echo(RedisValue),
     Ping,
     Set(RedisValue, RedisValue),
     SetTimeout(RedisValue, RedisValue, RedisValue),
     Get(RedisValue),
+    Info(RedisValue),
 }
 
 use std::collections::HashMap;
@@ -32,12 +33,10 @@ struct Args {
     port: u16,
 }
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    
     let args = Args::parse();
-    
+
     dbg!(args.port);
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
 
@@ -76,6 +75,12 @@ async fn handle_connection(stream: TcpStream) -> Result<()> {
                 Result::Ok(RedisCommand::SetTimeout(key, value, timeout)) => {
                     let _ = handle_command(RedisCommand::SetTimeout(key, value, timeout));
                     RedisValue::SimpleString("OK".to_owned())
+                }
+
+                Result::Ok(info_command @ RedisCommand::Info(_)) => {
+                    // Result::Ok( ref info_command @ RedisCommand::Info(ref _ic)) => {
+                   handle_command(info_command.clone()).expect("BULK String expected")
+                    // RedisValue::BulkString(kv_info_string.to_owned())
                 }
 
                 _c => panic!("Cannot handle command."),
@@ -131,6 +136,29 @@ fn handle_command(command: RedisCommand) -> Option<RedisValue> {
             } else {
                 eprintln!("\n\nNo value found for key {:?}\n", key);
                 None
+            }
+        }
+        // RedisCommand::Info(kv_info_string) => {
+        //     let mut hashmap = GLOBAL_HASHMAP.lock().unwrap();
+        //     let mut kv_info = String::new();
+        //     for (key, value) in hashmap.iter() {
+        //         kv_info.push_str(format!("{}:{}\n", key, value).as_str());
+        //     }
+        //     kv_info.push_str(kv_info_string.to_owned().as_str());
+        //     Some(RedisValue::BulkString(kv_info))
+        // }
+        RedisCommand::Info(info_command) => {
+            match info_command {
+                RedisValue::BulkString(s) if s.to_lowercase() == "replication" => {
+                    Some(RedisValue::BulkString("role:master".to_owned()))
+                    // \r\nconnected_slaves:0\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\nmaster_repl_offset:0\r\n".to_string())
+                }
+                _ => {
+                    panic!(
+                        "info command is not replication. it is: {:?} ",
+                        info_command
+                    )
+                }
             }
         }
         _ => panic!("Can handle only Set command yet."),
@@ -197,6 +225,15 @@ fn to_command((command, args): (String, Vec<RedisValue>)) -> Result<RedisCommand
         }
         // RedisValue::SimpleString("PONG".to_string()),
         "ping" => Ok(RedisCommand::Ping),
+        "info" => {
+            if args.len() < 1 {
+                // todo in future, return all the 'info sections'
+                return Err(anyhow::anyhow!("info command assumes an argument"));
+            } else {
+                // return only the replication info section
+                Ok(RedisCommand::Info(args.first().unwrap().clone()))
+            }
+        }
         // args.first().unwrap().clone(),
         c => Err(anyhow::anyhow!("Cannot parse the command given: {:?}", c)), // panic!("Cannot handle command {}", c),
     }
